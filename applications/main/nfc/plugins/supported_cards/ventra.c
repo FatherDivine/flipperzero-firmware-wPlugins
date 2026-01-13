@@ -484,7 +484,7 @@ static bool ventra_parse(const NfcDevice* device, FuriString* parsed_data) {
 
         furi_string_cat_printf(
             parsed_data,
-            "Exp: %04d-%02d-%02d %02d:%02d\n",
+            "Exp: %04d-%02d-%02d %02d:%02d",
             ventra_validity_date.year,
             ventra_validity_date.month,
             ventra_validity_date.day,
