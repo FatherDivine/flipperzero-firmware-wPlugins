@@ -3,6 +3,12 @@
 // Based on my own research, with...
 // Credit to https://www.lenrek.net/experiments/compass-tickets/ & MetroDroid project for underlying info
 // Credit to FatherDivine (Github) for adding the "stop IDs & stop names" database (& code tweaks).
+// Additional improvements by FatherDivine (Github):
+//   - Added month validation (1-12) to prevent invalid date structures
+//   - Added out_size parameter validation in ventra_lookup_stop_name_str
+//   - Added skip for empty/whitespace-only lines in CSV parsing
+//   - Removed unused dt_diff function
+//   - Fixed unnecessary storage_file_close on failed file open
 //
 // This parser can decode the paper single-use and single/multi-day paper passes using Ultralight EV1
 // The plastic cards are DESFire and fully locked down, not much useful info extractable
@@ -361,14 +367,13 @@ static bool ventra_parse(FuriString* parsed_data, const MfUltralightData* data) 
         date_y >>= 9;
         date_y += 2000;
 
-        // Month validation as per Copilot review feedback
+        // Month validation - if invalid, card data may be corrupted
         if(date_m >= 1 && date_m <= 12) {
             ventra_exp_date.day = date_d;
             ventra_exp_date.month = date_m;
             ventra_exp_date.year = date_y;
             ventra_validity_date = ventra_exp_date;
         } else {
-            // Invalid month - card data may be corrupted
             FURI_LOG_W(TAG, "Invalid month value: %d", date_m);
             furi_string_free(ventra_prod_str);
             break;
