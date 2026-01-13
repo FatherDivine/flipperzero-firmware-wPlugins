@@ -522,9 +522,12 @@ static NfcCommand ventra_poller_callback(NfcGenericEvent event, void* context) {
         view_dispatcher_send_custom_event(app->view_dispatcher, custom_event);
         return NfcCommandStop;
     } else if(mf_ultralight_event->type == MfUltralightPollerEventTypeAuthRequest) {
-        view_dispatcher_send_custom_event(app->view_dispatcher, MetroflipCustomEventPollerFail);
+        // Don't treat auth request as failure - let the read continue
+        // The read may still succeed even if auth fails
+        return NfcCommandContinue;
     } else if(mf_ultralight_event->type == MfUltralightPollerEventTypeAuthSuccess) {
-        view_dispatcher_send_custom_event(app->view_dispatcher, MetroflipCustomEventPollerSuccess);
+        // Auth success is informational, continue with read
+        return NfcCommandContinue;
     }
 
     return NfcCommandContinue;
@@ -534,6 +537,7 @@ static void ventra_on_enter(Metroflip* app) {
     dolphin_deed(DolphinDeedNfcRead);
 
     if(app->data_loaded) {
+        // Data loaded from file
         FURI_LOG_I(TAG, "Ventra data loaded from file");
         Storage* storage = furi_record_open(RECORD_STORAGE);
         FlipperFormat* ff = flipper_format_file_alloc(storage);
@@ -565,7 +569,39 @@ static void ventra_on_enter(Metroflip* app) {
         }
         flipper_format_free(ff);
         furi_record_close(RECORD_STORAGE);
+    } else if(app->auto_mode) {
+        // Coming from Auto scene - data already read into app->nfc_device
+        FURI_LOG_I(TAG, "Ventra using data from auto-detect scan");
+        const MfUltralightData* ultralight_data =
+            nfc_device_get_data(app->nfc_device, NfcProtocolMfUltralight);
+        
+        // Safety check for null data
+        if(!ultralight_data) {
+            FURI_LOG_E(TAG, "Failed to get ultralight data from nfc_device");
+            view_dispatcher_send_custom_event(app->view_dispatcher, MetroflipCustomEventPollerFail);
+            return;
+        }
+        
+        FuriString* parsed_data = furi_string_alloc();
+        Widget* widget = app->widget;
+
+        furi_string_reset(app->text_box_store);
+        if(!ventra_parse(parsed_data, ultralight_data)) {
+            furi_string_reset(app->text_box_store);
+            FURI_LOG_I(TAG, "Unknown card type");
+            furi_string_printf(parsed_data, "\e#Unknown card\n");
+        }
+        widget_add_text_scroll_element(
+            widget, 0, 0, 128, 64, furi_string_get_cstr(parsed_data));
+        widget_add_button_element(
+            widget, GuiButtonTypeLeft, "Exit", metroflip_exit_widget_callback, app);
+        widget_add_button_element(
+            widget, GuiButtonTypeRight, "Save", metroflip_save_widget_callback, app);
+
+        furi_string_free(parsed_data);
+        view_dispatcher_switch_to_view(app->view_dispatcher, MetroflipViewWidget);
     } else {
+        // Manual scan - need to read card
         FURI_LOG_I(TAG, "Ventra scanning for card");
         // Setup view
         Popup* popup = app->popup;
@@ -649,7 +685,8 @@ static bool ventra_on_event(Metroflip* app, SceneManagerEvent event) {
 static void ventra_on_exit(Metroflip* app) {
     widget_reset(app->widget);
 
-    if(app->poller && !app->data_loaded) {
+    // Only stop poller if we started one (manual scan, not auto_mode or file load)
+    if(app->poller && !app->data_loaded && !app->auto_mode) {
         nfc_poller_stop(app->poller);
         nfc_poller_free(app->poller);
     }
