@@ -510,7 +510,7 @@ static bool ventra_parse(const NfcDevice* device, FuriString* parsed_data) {
         furi_string_cat_printf(parsed_data, "Tx count: %d\n", ventra_high_seq);
         furi_string_cat_printf(
             parsed_data,
-            "Hard Expiry: %04d-%02d-%02d\n",
+            "Hard Expiry: %04d-%02d-%02d",
             ventra_exp_date.year,
             ventra_exp_date.month,
             ventra_exp_date.day);
