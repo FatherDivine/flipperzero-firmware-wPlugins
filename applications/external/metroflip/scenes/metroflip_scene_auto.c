@@ -14,7 +14,11 @@
 #include "../api/metroflip/metroflip_api.h"
 #define TAG "Metroflip:Scene:Auto"
 
+// Detection constants for Ventra
+#define VENTRA_MIN_PAGES_REQUIRED 7 // Need pages 0-6
+
 // Detection constants for TRT (Tianjin Railway Transit)
+#define TRT_MIN_PAGES_REQUIRED        15 // Need pages 0-14 (0x0E)
 #define TRT_LATEST_SALE_MARKER        0x02
 #define TRT_SALE_RECORD_TIME_STAMP_A  0x0C
 #define TRT_SALE_RECORD_TIME_STAMP_B  0x0E
@@ -23,7 +27,7 @@
 // Helper function to determine if MfUltralight card is Ventra
 static bool is_ventra_card(const MfUltralightData* data) {
     // Ventra detection requires pages 4 and 6
-    if(data->pages_read < 7) return false;
+    if(data->pages_read < VENTRA_MIN_PAGES_REQUIRED) return false;
 
     // Ventra detection signature from ventra.c
     return (data->page[4].data[0] == 0x0A && data->page[4].data[1] == 4 &&
@@ -33,8 +37,8 @@ static bool is_ventra_card(const MfUltralightData* data) {
 
 // Helper function to determine if MfUltralight card is TRT
 static bool is_trt_card(const MfUltralightData* data) {
-    // TRT detection requires pages up to 0x0E (14), so need at least 15 pages
-    if(data->pages_read < 15) return false;
+    // TRT detection requires pages up to 0x0E (14)
+    if(data->pages_read < TRT_MIN_PAGES_REQUIRED) return false;
 
     // TRT detection logic from trt.c
     uint8_t latest_sale_page = 0;
@@ -48,6 +52,8 @@ static bool is_trt_card(const MfUltralightData* data) {
     }
 
     // Check if the sale record was backed up
+    // Note: latest_sale_page is guaranteed to be either 0x0C (12) or 0x0E (14) here,
+    // so latest_sale_page - 1 will be 11 or 13, safely within bounds
     const uint8_t* partial_record_pointer = &data->page[latest_sale_page - 1].data[0];
     const uint8_t* full_record_pointer = &data->page[TRT_FULL_SALE_TIME_STAMP_PAGE].data[0];
     uint32_t latest_sale_record = bit_lib_get_bits_32(partial_record_pointer, 3, 20);
