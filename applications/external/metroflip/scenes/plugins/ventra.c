@@ -2,8 +2,8 @@
 // Made by @hazardousvoltage
 // Based on my own research, with...
 // Credit to https://www.lenrek.net/experiments/compass-tickets/ & MetroDroid project for underlying info
-// Credit to FatherDivine (Github) for adding the "stop IDs & stop names" database (& code tweaks).
-// Additional improvements by FatherDivine (Github):
+// Credit to FatherDivine for adding the "stop IDs & stop names" database (& code tweaks).
+// Additional improvements by FatherDivine:
 //   - Added month validation (1-12) to prevent invalid date structures
 //   - Added out_size parameter validation in ventra_lookup_stop_name_str
 //   - Added skip for empty/whitespace-only lines in CSV parsing
