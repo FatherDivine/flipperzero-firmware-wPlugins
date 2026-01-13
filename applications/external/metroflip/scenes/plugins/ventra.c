@@ -16,9 +16,16 @@
 // Adapted for Metroflip plugin API
 
 /*
- * CSV STOP DATABASE FORMAT (IMPORTANT)
+ * STOP DATABASE FORMAT (IMPORTANT)
  *
- * This parser supports unified lookup for BOTH bus and train stops.
+ * This parser supports lookup for BOTH bus and train stops using a two-tiered system.
+ *
+ * PRIMARY LOOKUP (Metroflip station files - separate files for bus and train):
+ *   Bus stations:   /ext/apps_assets/metroflip/ventra/stations/bus/stations.txt
+ *   Train stations: /ext/apps_assets/metroflip/ventra/stations/train/stations.txt
+ *
+ * FALLBACK LOOKUP (unified CSV - for users without Metroflip):
+ *   /ext/apps_data/ventra/cta_stops.csv
  *
  * Store IDs EXACTLY as strings:
  *
@@ -29,12 +36,9 @@
  *       Example: 003B,Jefferson Park
  *
  * The parser will:
- *   - Convert bus locus → decimal string
- *   - Convert train locus → 4‑digit uppercase hex
- *   - Look up both in the same CSV
- *
- * CSV path:
- *   /ext/apps_data/ventra/cta_stops.csv
+ *   - Determine transport type (B=Bus line 2, T=Train line 1)
+ *   - First try the type-specific file (bus/train stations.txt)
+ *   - Fall back to cta_stops.csv if not found
  */
 
 #include <flipper_application.h>
@@ -54,8 +58,12 @@
 
 #define TAG "Metroflip:Scene:Ventra"
 
-// Path to the CSV stop database on SD card
-#define VENTRA_STOP_DB_PATH "/ext/apps_data/ventra/cta_stops.csv"
+// Paths to station database files on SD card
+// Primary paths - separate files for bus and train (Metroflip app)
+#define VENTRA_BUS_STATIONS_PATH   "/ext/apps_assets/metroflip/ventra/stations/bus/stations.txt"
+#define VENTRA_TRAIN_STATIONS_PATH "/ext/apps_assets/metroflip/ventra/stations/train/stations.txt"
+// Fallback path - unified CSV (for users without Metroflip)
+#define VENTRA_STOP_DB_PATH        "/ext/apps_data/ventra/cta_stops.csv"
 
 static DateTime ventra_exp_date = {0};
 static DateTime ventra_validity_date = {0};
@@ -134,21 +142,17 @@ static bool ventra_read_line(File* file, char* buf, size_t buf_size) {
     return true;
 }
 
-/* Unified CSV lookup for bus (decimal) and train (hex) IDs.
- *
- * CSV format (IDs stored as exact strings):
+/* Helper function to search a single file for an ID.
+ * File format (IDs stored as exact strings):
  *   Bus:   16959,Harlem & Addison
  *   Train: 003B,Jefferson Park
  */
-static bool ventra_lookup_stop_name_str(const char* id_str, char* out_name, size_t out_size) {
-    // Validation for out_size parameter
-    if(out_size == 0) return false;
-
+static bool ventra_search_file(const char* file_path, const char* id_str, char* out_name, size_t out_size) {
     Storage* storage = furi_record_open(RECORD_STORAGE);
     if(!storage) return false;
 
     File* file = storage_file_alloc(storage);
-    if(!storage_file_open(file, VENTRA_STOP_DB_PATH, FSAM_READ, FSOM_OPEN_EXISTING)) {
+    if(!storage_file_open(file, file_path, FSAM_READ, FSOM_OPEN_EXISTING)) {
         storage_file_free(file);
         furi_record_close(RECORD_STORAGE);
         return false;
@@ -191,6 +195,39 @@ static bool ventra_lookup_stop_name_str(const char* id_str, char* out_name, size
     furi_record_close(RECORD_STORAGE);
 
     return found;
+}
+
+/* Two-tiered lookup for bus (decimal) and train (hex) IDs.
+ *
+ * Lookup order:
+ *   1. Type-specific file (bus/train stations.txt from Metroflip)
+ *   2. Fallback to unified CSV (cta_stops.csv)
+ *
+ * line parameter: 1 = Train (T), 2 = Bus (B)
+ */
+static bool ventra_lookup_stop_name_str(const char* id_str, uint8_t line, char* out_name, size_t out_size) {
+    // Validation for out_size parameter
+    if(out_size == 0) return false;
+
+    // Determine primary lookup path based on transport type
+    const char* primary_path = NULL;
+    if(line == 2) {
+        // Bus
+        primary_path = VENTRA_BUS_STATIONS_PATH;
+    } else if(line == 1) {
+        // Train
+        primary_path = VENTRA_TRAIN_STATIONS_PATH;
+    }
+
+    // Try primary lookup (type-specific Metroflip file)
+    if(primary_path != NULL) {
+        if(ventra_search_file(primary_path, id_str, out_name, out_size)) {
+            return true;
+        }
+    }
+
+    // Fallback to unified CSV
+    return ventra_search_file(VENTRA_STOP_DB_PATH, id_str, out_name, out_size);
 }
 
 /********************************************************************
@@ -266,8 +303,8 @@ static FuriString* ventra_parse_xact(const MfUltralightData* data, uint8_t blk, 
     // Convert locus → lookup key (decimal for bus, hex for train)
     ventra_format_id(locus, line, id_key, sizeof(id_key));
 
-    // Look up the formatted key in the CSV
-    have_name = ventra_lookup_stop_name_str(id_key, stop_name, sizeof(stop_name));
+    // Look up the formatted key (tries type-specific file first, then CSV fallback)
+    have_name = ventra_lookup_stop_name_str(id_key, line, stop_name, sizeof(stop_name));
 
     if(have_name) {
         furi_string_printf(
