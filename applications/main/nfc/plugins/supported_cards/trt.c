@@ -64,7 +64,7 @@ static bool trt_parse(const NfcDevice* device, FuriString* parsed_data) {
         furi_string_cat_printf(parsed_data, "Balance: %u.%02u RMB\n", balance_yuan, balance_cent);
         furi_string_cat_printf(
             parsed_data,
-            "Sale Date: \n%04u-%02d-%02d %02d:%02d",
+            "Sale Date: \n%04u-%02d-%02d %02d:%02d\n",
             sale_year,
             sale_month,
             sale_day,

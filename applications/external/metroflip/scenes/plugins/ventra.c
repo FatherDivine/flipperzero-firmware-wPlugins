@@ -9,6 +9,9 @@
 //   - Added skip for empty/whitespace-only lines in CSV parsing
 //   - Removed unused dt_diff function
 //   - Fixed unnecessary storage_file_close on failed file open
+//   - Added two-tiered station lookup (bus/train specific files with CSV fallback)
+//   - Added auto_mode support to use already-read data from auto-detect scan
+//   - Added trailing newline to parsed output to prevent text obscured by buttons
 //
 // This parser can decode the paper single-use and single/multi-day paper passes using Ultralight EV1
 // The plastic cards are DESFire and fully locked down, not much useful info extractable
@@ -489,7 +492,7 @@ static bool ventra_parse(FuriString* parsed_data, const MfUltralightData* data) 
         furi_string_cat_printf(parsed_data, "Tx count: %d\n", ventra_high_seq);
         furi_string_cat_printf(
             parsed_data,
-            "Hard Expiry: %04d-%02d-%02d",
+            "Hard Expiry: %04d-%02d-%02d\n",
             ventra_exp_date.year,
             ventra_exp_date.month,
             ventra_exp_date.day);

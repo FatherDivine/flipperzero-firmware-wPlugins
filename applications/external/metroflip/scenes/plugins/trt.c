@@ -1,6 +1,9 @@
 // Flipper Zero parser for for Tianjin Railway Transit (TRT)
 // https://en.wikipedia.org/wiki/Tianjin_Metro
 // Reverse engineering and parser development by @Torron (Github: @zinongli) and added to Metroflip by @Lupin (Github: @luu176)
+// Additional improvements by FatherDivine:
+//   - Added auto_mode support to use already-read data from auto-detect scan
+//   - Added trailing newline to parsed output to prevent text obscured by buttons
 
 #include <flipper_application.h>
 #include "../../metroflip_i.h"
@@ -72,7 +75,7 @@ static bool trt_parse(FuriString* parsed_data, const MfUltralightData* data) {
         furi_string_cat_printf(parsed_data, "Balance: %u.%02u RMB\n", balance_yuan, balance_cent);
         furi_string_cat_printf(
             parsed_data,
-            "Sale Date: \n%04u-%02d-%02d %02d:%02d",
+            "Sale Date: \n%04u-%02d-%02d %02d:%02d\n",
             sale_year,
             sale_month,
             sale_day,
