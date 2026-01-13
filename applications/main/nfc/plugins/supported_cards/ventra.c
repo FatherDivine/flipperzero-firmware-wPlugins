@@ -2,7 +2,13 @@
 // Made by @hazardousvoltage
 // Based on my own research, with...
 // Credit to https://www.lenrek.net/experiments/compass-tickets/ & MetroDroid project for underlying info
-// Credit to FatherDivine (Github) for adding the "stop IDs & stop names" database (& code tweaks).
+// Credit to FatherDivine for adding the "stop IDs & stop names" database (& code tweaks).
+// Additional improvements by FatherDivine:
+//   - Added month validation (1-12) to prevent invalid date structures
+//   - Added out_size parameter validation in ventra_lookup_stop_name_str
+//   - Added skip for empty/whitespace-only lines in CSV parsing
+//   - Removed unused dt_diff function
+//   - Fixed unnecessary storage_file_close on failed file open
 //
 // This parser can decode the paper single-use and single/multi-day paper passes using Ultralight EV1
 // The plastic cards are DESFire and fully locked down, not much useful info extractable
@@ -18,9 +24,16 @@
 // - Generalize to handle all known Cubic Nextfare Ultralight systems?  Anyone wants to send me specimen dumps, hit me up on Discord.
 
 /* 
- * CSV STOP DATABASE FORMAT (IMPORTANT)
+ * STOP DATABASE FORMAT (IMPORTANT)
  *
- * This parser supports unified lookup for BOTH bus and train stops.
+ * This parser supports lookup for BOTH bus and train stops using a two-tiered system.
+ *
+ * PRIMARY LOOKUP (Metroflip station files - separate files for bus and train):
+ *   Bus stations:   /ext/apps_assets/metroflip/ventra/stations/bus/stations.txt
+ *   Train stations: /ext/apps_assets/metroflip/ventra/stations/train/stations.txt
+ *
+ * FALLBACK LOOKUP (unified CSV - for users without Metroflip):
+ *   /ext/apps_data/ventra/cta_stops.csv
  *
  * Store IDs EXACTLY as strings:
  *
@@ -31,12 +44,9 @@
  *       Example: 003B,Jefferson Park
  *
  * The parser will:
- *   - Convert bus locus → decimal string
- *   - Convert train locus → 4‑digit uppercase hex
- *   - Look up both in the same CSV
- *
- * CSV path:
- *   /ext/apps_data/ventra/cta_stops.csv
+ *   - Determine transport type (B=Bus line 2, T=Train line 1)
+ *   - First try the type-specific file (bus/train stations.txt)
+ *   - Fall back to cta_stops.csv if not found
  */
 
 #include "nfc_supported_card_plugin.h"
@@ -53,8 +63,12 @@
 
 #define TAG "Ventra"
 
-// Path to the CSV stop database on SD card
-#define VENTRA_STOP_DB_PATH "/ext/apps_data/ventra/cta_stops.csv"
+// Paths to station database files on SD card
+// Primary paths - separate files for bus and train (Metroflip app)
+#define VENTRA_BUS_STATIONS_PATH   "/ext/apps_assets/metroflip/ventra/stations/bus/stations.txt"
+#define VENTRA_TRAIN_STATIONS_PATH "/ext/apps_assets/metroflip/ventra/stations/train/stations.txt"
+// Fallback path - unified CSV (for users without Metroflip)
+#define VENTRA_STOP_DB_PATH        "/ext/apps_data/ventra/cta_stops.csv"
 
 DateTime ventra_exp_date = {0}, ventra_validity_date = {0};
 uint8_t ventra_high_seq = 0, ventra_cur_blk = 0, ventra_mins_active = 0;
@@ -70,15 +84,6 @@ static DateTime dt_delta(DateTime dt, uint8_t delta_days) {
         datetime_datetime_to_timestamp(&dt) - (uint64_t)delta_days * 86400, &dt_shifted);
     return dt_shifted;
 }
-
-/*
-static long dt_diff(DateTime dta, DateTime dtb) {
-    // returns difference in seconds between two DateTimes
-    long diff;
-    diff = datetime_datetime_to_timestamp(&dta) - datetime_datetime_to_timestamp(&dtb); 
-    return diff;
-}
-*/
 
 // Card is expired if:
 // - Hard expiration date passed (90 days from purchase, encoded in product record)
@@ -140,19 +145,17 @@ static bool ventra_read_line(File* file, char* buf, size_t buf_size) {
     return true;
 }
 
-/* Unified CSV lookup for bus (decimal) and train (hex) IDs.
- *
- * CSV format (IDs stored as exact strings):
+/* Helper function to search a single file for an ID.
+ * File format (IDs stored as exact strings):
  *   Bus:   16959,Harlem & Addison
  *   Train: 003B,Jefferson Park
  */
-static bool ventra_lookup_stop_name_str(const char* id_str, char* out_name, size_t out_size) {
+static bool ventra_search_file(const char* file_path, const char* id_str, char* out_name, size_t out_size) {
     Storage* storage = furi_record_open(RECORD_STORAGE);
     if(!storage) return false;
 
     File* file = storage_file_alloc(storage);
-    if(!storage_file_open(file, VENTRA_STOP_DB_PATH, FSAM_READ, FSOM_OPEN_EXISTING)) {
-        storage_file_close(file);
+    if(!storage_file_open(file, file_path, FSAM_READ, FSOM_OPEN_EXISTING)) {
         storage_file_free(file);
         furi_record_close(RECORD_STORAGE);
         return false;
@@ -162,6 +165,16 @@ static bool ventra_lookup_stop_name_str(const char* id_str, char* out_name, size
     bool found = false;
 
     while(ventra_read_line(file, line, sizeof(line))) {
+        // Skip empty or whitespace-only lines
+        char* trimmed = line;
+        while(*trimmed == ' ' || *trimmed == '\t' || *trimmed == '\r' || *trimmed == '\n') {
+            trimmed++;
+        }
+        if(*trimmed == '\0') continue;
+
+        // Skip comment lines
+        if(line[0] == '#') continue;
+
         char* comma = strchr(line, ',');
         if(!comma) continue;
 
@@ -185,6 +198,39 @@ static bool ventra_lookup_stop_name_str(const char* id_str, char* out_name, size
     furi_record_close(RECORD_STORAGE);
 
     return found;
+}
+
+/* Two-tiered lookup for bus (decimal) and train (hex) IDs.
+ *
+ * Lookup order:
+ *   1. Type-specific file (bus/train stations.txt from Metroflip)
+ *   2. Fallback to unified CSV (cta_stops.csv)
+ *
+ * line parameter: 1 = Train (T), 2 = Bus (B)
+ */
+static bool ventra_lookup_stop_name_str(const char* id_str, uint8_t line, char* out_name, size_t out_size) {
+    // Validation for out_size parameter
+    if(out_size == 0) return false;
+
+    // Determine primary lookup path based on transport type
+    const char* primary_path = NULL;
+    if(line == 2) {
+        // Bus
+        primary_path = VENTRA_BUS_STATIONS_PATH;
+    } else if(line == 1) {
+        // Train
+        primary_path = VENTRA_TRAIN_STATIONS_PATH;
+    }
+
+    // Try primary lookup (type-specific Metroflip file)
+    if(primary_path != NULL) {
+        if(ventra_search_file(primary_path, id_str, out_name, out_size)) {
+            return true;
+        }
+    }
+
+    // Fallback to unified CSV
+    return ventra_search_file(VENTRA_STOP_DB_PATH, id_str, out_name, out_size);
 }
 
 /********************************************************************
@@ -271,8 +317,8 @@ static FuriString* ventra_parse_xact(const MfUltralightData* data, uint8_t blk, 
     // Convert locus → lookup key (decimal for bus, hex for train)
     ventra_format_id(locus, line, id_key, sizeof(id_key));
 
-    // Look up the formatted key in the CSV
-    have_name = ventra_lookup_stop_name_str(id_key, stop_name, sizeof(stop_name));
+    // Look up the formatted key (tries type-specific file first, then CSV fallback)
+    have_name = ventra_lookup_stop_name_str(id_key, line, stop_name, sizeof(stop_name));
 
     if(have_name) {
         // Use the CSV name + the exact ID key used for lookup
@@ -372,10 +418,18 @@ static bool ventra_parse(const NfcDevice* device, FuriString* parsed_data) {
         uint8_t date_m = (date_y >> 5) & 0x0F;
         date_y >>= 9;
         date_y += 2000;
-        ventra_exp_date.day = date_d;
-        ventra_exp_date.month = date_m;
-        ventra_exp_date.year = date_y;
-        ventra_validity_date = ventra_exp_date; // Until we know otherwise
+
+        // Month validation - if invalid, card data may be corrupted
+        if(date_m >= 1 && date_m <= 12) {
+            ventra_exp_date.day = date_d;
+            ventra_exp_date.month = date_m;
+            ventra_exp_date.year = date_y;
+            ventra_validity_date = ventra_exp_date; // Until we know otherwise
+        } else {
+            FURI_LOG_W(TAG, "Invalid month value: %d", date_m);
+            furi_string_free(ventra_prod_str);
+            break;
+        }
 
         // Parse the transaction blocks.  This sets a few sloppy globals, but it's too complex and repetitive to inline.
         FuriString* ventra_xact_str1 = ventra_parse_xact(data, 8, is_pass);
