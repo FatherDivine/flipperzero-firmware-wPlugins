@@ -574,6 +574,14 @@ static void ventra_on_enter(Metroflip* app) {
         FURI_LOG_I(TAG, "Ventra using data from auto-detect scan");
         const MfUltralightData* ultralight_data =
             nfc_device_get_data(app->nfc_device, NfcProtocolMfUltralight);
+        
+        // Safety check for null data
+        if(!ultralight_data) {
+            FURI_LOG_E(TAG, "Failed to get ultralight data from nfc_device");
+            view_dispatcher_send_custom_event(app->view_dispatcher, MetroflipCustomEventPollerFail);
+            return;
+        }
+        
         FuriString* parsed_data = furi_string_alloc();
         Widget* widget = app->widget;
 
