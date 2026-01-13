@@ -1,4 +1,4 @@
-// Flipper Zero parser for for Tianjin Railway Transit (TRT)
+// Flipper Zero parser for Tianjin Railway Transit (TRT)
 // https://en.wikipedia.org/wiki/Tianjin_Metro
 // Reverse engineering and parser development by @Torron (Github: @zinongli) and added to Metroflip by @Lupin (Github: @luu176)
 // Additional improvements by FatherDivine:
