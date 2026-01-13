@@ -22,6 +22,9 @@
 
 // Helper function to determine if MfUltralight card is Ventra
 static bool is_ventra_card(const MfUltralightData* data) {
+    // Ventra detection requires pages 4 and 6
+    if(data->pages_read < 7) return false;
+
     // Ventra detection signature from ventra.c
     return (data->page[4].data[0] == 0x0A && data->page[4].data[1] == 4 &&
             data->page[4].data[2] == 0 && data->page[6].data[0] == 0 &&
@@ -30,6 +33,9 @@ static bool is_ventra_card(const MfUltralightData* data) {
 
 // Helper function to determine if MfUltralight card is TRT
 static bool is_trt_card(const MfUltralightData* data) {
+    // TRT detection requires pages up to 0x0E (14), so need at least 15 pages
+    if(data->pages_read < 15) return false;
+
     // TRT detection logic from trt.c
     uint8_t latest_sale_page = 0;
 
