@@ -143,7 +143,6 @@ static bool ventra_lookup_stop_name_str(const char* id_str, char* out_name, size
 
     File* file = storage_file_alloc(storage);
     if(!storage_file_open(file, VENTRA_STOP_DB_PATH, FSAM_READ, FSOM_OPEN_EXISTING)) {
-        storage_file_close(file);
         storage_file_free(file);
         furi_record_close(RECORD_STORAGE);
         return false;

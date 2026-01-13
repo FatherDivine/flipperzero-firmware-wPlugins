@@ -3,6 +3,12 @@
 // Based on my own research, with...
 // Credit to https://www.lenrek.net/experiments/compass-tickets/ & MetroDroid project for underlying info
 // Credit to FatherDivine (Github) for adding the "stop IDs & stop names" database (& code tweaks).
+// Additional improvements by FatherDivine (Github):
+//   - Added month validation (1-12) to prevent invalid date structures
+//   - Added out_size parameter validation in ventra_lookup_stop_name_str
+//   - Added skip for empty/whitespace-only lines in CSV parsing
+//   - Removed unused dt_diff function
+//   - Fixed unnecessary storage_file_close on failed file open
 //
 // This parser can decode the paper single-use and single/multi-day paper passes using Ultralight EV1
 // The plastic cards are DESFire and fully locked down, not much useful info extractable
@@ -71,15 +77,6 @@ static DateTime dt_delta(DateTime dt, uint8_t delta_days) {
     return dt_shifted;
 }
 
-/*
-static long dt_diff(DateTime dta, DateTime dtb) {
-    // returns difference in seconds between two DateTimes
-    long diff;
-    diff = datetime_datetime_to_timestamp(&dta) - datetime_datetime_to_timestamp(&dtb); 
-    return diff;
-}
-*/
-
 // Card is expired if:
 // - Hard expiration date passed (90 days from purchase, encoded in product record)
 // - Soft expiration date passed:
@@ -147,12 +144,14 @@ static bool ventra_read_line(File* file, char* buf, size_t buf_size) {
  *   Train: 003B,Jefferson Park
  */
 static bool ventra_lookup_stop_name_str(const char* id_str, char* out_name, size_t out_size) {
+    // Validation for out_size parameter
+    if(out_size == 0) return false;
+
     Storage* storage = furi_record_open(RECORD_STORAGE);
     if(!storage) return false;
 
     File* file = storage_file_alloc(storage);
     if(!storage_file_open(file, VENTRA_STOP_DB_PATH, FSAM_READ, FSOM_OPEN_EXISTING)) {
-        storage_file_close(file);
         storage_file_free(file);
         furi_record_close(RECORD_STORAGE);
         return false;
@@ -162,6 +161,16 @@ static bool ventra_lookup_stop_name_str(const char* id_str, char* out_name, size
     bool found = false;
 
     while(ventra_read_line(file, line, sizeof(line))) {
+        // Skip empty or whitespace-only lines
+        char* trimmed = line;
+        while(*trimmed == ' ' || *trimmed == '\t' || *trimmed == '\r' || *trimmed == '\n') {
+            trimmed++;
+        }
+        if(*trimmed == '\0') continue;
+
+        // Skip comment lines
+        if(line[0] == '#') continue;
+
         char* comma = strchr(line, ',');
         if(!comma) continue;
 
@@ -372,10 +381,18 @@ static bool ventra_parse(const NfcDevice* device, FuriString* parsed_data) {
         uint8_t date_m = (date_y >> 5) & 0x0F;
         date_y >>= 9;
         date_y += 2000;
-        ventra_exp_date.day = date_d;
-        ventra_exp_date.month = date_m;
-        ventra_exp_date.year = date_y;
-        ventra_validity_date = ventra_exp_date; // Until we know otherwise
+
+        // Month validation - if invalid, card data may be corrupted
+        if(date_m >= 1 && date_m <= 12) {
+            ventra_exp_date.day = date_d;
+            ventra_exp_date.month = date_m;
+            ventra_exp_date.year = date_y;
+            ventra_validity_date = ventra_exp_date; // Until we know otherwise
+        } else {
+            FURI_LOG_W(TAG, "Invalid month value: %d", date_m);
+            furi_string_free(ventra_prod_str);
+            break;
+        }
 
         // Parse the transaction blocks.  This sets a few sloppy globals, but it's too complex and repetitive to inline.
         FuriString* ventra_xact_str1 = ventra_parse_xact(data, 8, is_pass);
